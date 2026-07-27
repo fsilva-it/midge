@@ -71,7 +71,11 @@ $r.AppControl = $ini
 $bytes = [IO.File]::ReadAllBytes($ini)
 $ehUtf16 = ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE)
 $enc = if ($ehUtf16) { [Text.Encoding]::Unicode } else { [Text.Encoding]::Default }
-$linhas = [Collections.Generic.List[string]]($enc.GetString($bytes) -split "`r?`n")
+$texto = $enc.GetString($bytes)
+# Remove o BOM: se ficar, a 1a linha vira "<BOM>[Security]" e nao e'
+# reconhecida como cabecalho de secao.
+if ($texto.Length -gt 0 -and [int][char]$texto[0] -eq 0xFEFF) { $texto = $texto.Substring(1) }
+$linhas = [Collections.Generic.List[string]]($texto -split "`r?`n")
 
 # --- Backup -------------------------------------------------------
 $bkp = "$ini.bkp_" + (Get-Date -Format "yyyyMMdd-HHmmss")

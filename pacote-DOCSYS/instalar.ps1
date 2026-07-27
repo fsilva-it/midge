@@ -165,15 +165,21 @@ try {
     $tsRoot = @("C:\Program Files (x86)\TSplus", "C:\Program Files\TSplus") |
               Where-Object { Test-Path $_ } | Select-Object -First 1
     if ($tsRoot) {
-        $achouVbs = Get-ChildItem -Path $tsRoot -Recurse -Include *.ini,*.txt,*.xml,*.json `
-                        -ErrorAction SilentlyContinue |
-                    Select-String -Pattern "iniciar\.vbs" -SimpleMatch -List -ErrorAction SilentlyContinue
-        $resultado.TSplusPath = if ($achouVbs) { "aponta p/ iniciar.vbs" } else { "NAO aponta (ajustar)" }
-
-        $achouDaug = Get-ChildItem -Path $tsRoot -Recurse -Include *.ini,*.txt,*.xml,*.json `
-                        -ErrorAction SilentlyContinue |
-                     Select-String -Pattern "daughter" -List -ErrorAction SilentlyContinue
-        $resultado.TSplusDaugh = if ($achouDaug) { ($achouDaug | Select-Object -First 1).Line.Trim() } else { "nao localizado" }
+        # Olha SO o AppControl.ini (antes varria a arvore toda e
+        # acabava casando com arquivos de idioma do TSplus)
+        $appCtl = Join-Path $tsRoot "UserDesktop\files\AppControl.ini"
+        if (Test-Path $appCtl) {
+            $ctl = Get-Content $appCtl -Raw -ErrorAction SilentlyContinue
+            $resultado.TSplusPath = if ($ctl -match 'iniciar\.vbs') { "aponta p/ iniciar.vbs" }
+                                    else { "NAO aponta (rodar configurar-tsplus.ps1)" }
+            if ($ctl -match '(?m)^\s*no-daughter-process\s*=\s*(\S+)') {
+                $resultado.TSplusDaugh = "no-daughter-process=$($Matches[1])"
+            } else {
+                $resultado.TSplusDaugh = "ausente (rodar configurar-tsplus.ps1)"
+            }
+        } else {
+            $resultado.TSplusPath = "AppControl.ini nao encontrado"
+        }
     } else {
         $resultado.TSplusPath = "TSplus nao encontrado"
     }
