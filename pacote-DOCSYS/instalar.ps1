@@ -11,10 +11,37 @@
 ================================================================
 #>
 param(
-    [string]$Origem   = $PSScriptRoot,          # pasta com o iniciar.vbs
-    [string]$AppPath  = "C:\DeMaria\DOC-Windows\DOC-Windows.exe",
-    [int]   $MsTrava  = 0                        # 0 = mantem o valor do arquivo
+    [string]$Origem   = $PSScriptRoot,  # pasta com o iniciar.vbs
+    [string]$AppPath  = "",             # vazio = DETECTA sozinho (ver abaixo)
+    [int]   $MsTrava  = 0               # 0 = mantem o valor do arquivo
 )
+
+# O caminho do app VARIA entre servidores (ex.: "C:\DeMaria\..." x
+# "C:\DeMaria - Nuvem\..."). Quando -AppPath nao e' informado, o
+# instalador descobre lendo a publicacao do TSplus (AppControl.ini)
+# e ajusta o iniciar.vbs de acordo.
+function DetectarAppPath {
+    $raiz = @("C:\Program Files (x86)\TSplus","C:\Program Files\TSplus") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($raiz) {
+        $ini = Join-Path $raiz "UserDesktop\files\AppControl.ini"
+        if (Test-Path $ini) {
+            $achados = Get-Content $ini -ErrorAction SilentlyContinue |
+                       Select-String -Pattern '^\s*path\s*=\s*(.+DOC-Windows\.exe)\s*$'
+            foreach ($a in $achados) {
+                $p = $a.Matches[0].Groups[1].Value.Trim().Trim('"')
+                if (Test-Path $p) { return $p }
+            }
+        }
+    }
+    # varredura curta nos locais tipicos
+    foreach ($base in (Get-ChildItem "C:\" -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Name -like "DeMaria*" })) {
+        $c = Join-Path $base.FullName "DOC-Windows\DOC-Windows.exe"
+        if (Test-Path $c) { return $c }
+    }
+    return ""
+}
 
 $ErrorActionPreference = "Stop"
 $resultado = [ordered]@{
@@ -26,6 +53,8 @@ $resultado = [ordered]@{
     MsTrava     = "-"
     TSplusPath  = "-"
     TSplusDaugh = "-"
+    AppPath     = "-"
+    AppOrigem   = "-"
     Status      = "OK"
     Detalhe     = ""
 }
@@ -70,16 +99,41 @@ if (Test-Path $destVbs) {
     $resultado.Script = "instalado"
 }
 
-# --- 3. Ajuste opcional do MS_TRAVA ------------------------------
+# --- 3. Ajustes no script instalado ------------------------------
 $conteudo = Get-Content $destVbs -Raw -Encoding Default
+
+# 3a) MS_TRAVA (opcional)
 if ($MsTrava -gt 0) {
     $conteudo = [regex]::Replace($conteudo,
         '(?m)^(Const MS_TRAVA\s*=\s*)\d+', "`${1}$MsTrava")
-    Set-Content $destVbs -Value $conteudo -Encoding Default -NoNewline
 }
 if ($conteudo -match '(?m)^Const MS_TRAVA\s*=\s*(\d+)') {
     $resultado.MsTrava = $Matches[1]
 }
+
+# 3b) CAMINHO DO APP - varia entre servidores; detecta se nao informado
+if (-not $AppPath) {
+    $AppPath = DetectarAppPath
+    if ($AppPath) { $resultado.AppOrigem = "detectado" }
+} else {
+    $resultado.AppOrigem = "informado"
+}
+
+if ($AppPath) {
+    $appDir  = Split-Path $AppPath -Parent          # ...\DOC-Windows
+    $appBase = Split-Path $appDir  -Parent          # ...\DeMaria(...)
+    $licFile = Join-Path $appDir "logs\log_license.txt"
+    $wql     = ($appBase -replace '\\', '\\') + '\\%'   # escape p/ WQL
+
+    $conteudo = [regex]::Replace($conteudo, '(?m)^Const APP_PATH\s*=.*$', "Const APP_PATH   = ""$AppPath""")
+    $conteudo = [regex]::Replace($conteudo, '(?m)^Const APP_DIR\s*=.*$',  "Const APP_DIR    = ""$appDir""")
+    $conteudo = [regex]::Replace($conteudo, '(?m)^Const APP_WQL\s*=.*$',  "Const APP_WQL    = ""$wql""")
+    $conteudo = [regex]::Replace($conteudo, '(?m)^Const LIC_FILE\s*=.*$', "Const LIC_FILE   = ""$licFile""")
+    $resultado.AppPath = $AppPath
+}
+
+Set-Content $destVbs -Value $conteudo -Encoding Default -NoNewline
+
 if ($conteudo -notmatch 'MAX_TENTATIVAS') {
     $resultado.Detalhe = "AVISO: script sem auto-recuperacao (versao antiga?)"
 }
@@ -95,12 +149,13 @@ if ($conteudo -notmatch 'MAX_TENTATIVAS') {
 $resultado.Permissoes = "ok"
 
 # --- 5. Confere o executavel do app ------------------------------
-if (Test-Path $AppPath) {
+if ($AppPath -and (Test-Path $AppPath)) {
     $resultado.AppEncontr = "ok"
 } else {
     $resultado.AppEncontr = "NAO ENCONTRADO"
     $resultado.Status = "ATENCAO"
-    $resultado.Detalhe = "$AppPath nao existe neste servidor - ajustar APP_PATH no iniciar.vbs"
+    $resultado.Detalhe = "Nao localizei o DOC-Windows.exe neste servidor. " +
+        "Rode de novo com -AppPath ""<caminho completo do exe>""."
 }
 
 # --- 6. Diagnostico da config do TSplus --------------------------
