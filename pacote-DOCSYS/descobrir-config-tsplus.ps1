@@ -1,118 +1,156 @@
 <#
 ================================================================
- DESCOBERTA da configuracao do TSplus
- Rodar UMA VEZ no servidor QUE JA FUNCIONA (SERVIDOR-TS01).
+ CAPTURA da configuracao do TSplus
+ Rodar UMA VEZ no servidor QUE JA ESTA FUNCIONANDO.
 
- Nao altera nada. Apenas localiza ONDE o TSplus guarda:
-   (a) o caminho da aplicacao publicada (deve citar iniciar.vbs)
+ NAO altera nada. Localiza e copia os arquivos/chaves onde o TSplus
+ guarda as duas configuracoes que precisamos replicar:
+   (a) a publicacao apontando para C:\DOCSYS\iniciar.vbs
    (b) a opcao "daughter process handler"
- e gera um relatorio para automatizarmos a replicacao nos demais.
+
+ Gera:  C:\DOCSYS\captura-tsplus\  (pasta com o material)
+        C:\DOCSYS\captura-tsplus.zip
+
+ ATENCAO: revise o conteudo antes de compartilhar - arquivos de
+ configuracao do TSplus PODEM conter chave de licenca. O script
+ avisa se encontrar algo com cara de licenca.
 
  Uso (como Administrador):
    powershell -ExecutionPolicy Bypass -File .\descobrir-config-tsplus.ps1
-
- Saida: C:\DOCSYS\config-tsplus-descoberta.txt
 ================================================================
 #>
 $ErrorActionPreference = "SilentlyContinue"
-$saida = "C:\DOCSYS\config-tsplus-descoberta.txt"
-if (-not (Test-Path "C:\DOCSYS")) { New-Item -ItemType Directory "C:\DOCSYS" -Force | Out-Null }
 
-$linhas = @()
-$linhas += "=== DESCOBERTA CONFIG TSPLUS ==="
-$linhas += "Servidor : $env:COMPUTERNAME"
-$linhas += "Data     : $(Get-Date)"
-$linhas += ""
+$saidaDir = "C:\DOCSYS\captura-tsplus"
+$relat    = Join-Path $saidaDir "RELATORIO.txt"
+Remove-Item $saidaDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path $saidaDir -Force | Out-Null
+New-Item -ItemType Directory -Path "$saidaDir\arquivos" -Force | Out-Null
 
-# --- 1. Raiz do TSplus -------------------------------------------
-$raizes = @(
-    "C:\Program Files (x86)\TSplus",
-    "C:\Program Files\TSplus"
-) | Where-Object { Test-Path $_ }
+$L = @()
+$L += "=== CAPTURA CONFIG TSPLUS ==="
+$L += "Servidor : $env:COMPUTERNAME"
+$L += "Data     : $(Get-Date)"
+$L += ""
 
-if (-not $raizes) {
-    $linhas += "TSplus NAO encontrado nos caminhos padrao."
-} else {
-    foreach ($raiz in $raizes) {
-        $linhas += "--- Raiz: $raiz"
+# --- Raiz do TSplus ----------------------------------------------
+$raiz = @("C:\Program Files (x86)\TSplus","C:\Program Files\TSplus") |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
 
-        # (a) arquivos que citam iniciar.vbs / wscript
-        $linhas += ""
-        $linhas += "[A] Arquivos que citam 'iniciar.vbs' ou 'wscript':"
-        Get-ChildItem -Path $raiz -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Length -lt 3MB -and $_.Extension -match '\.(ini|txt|xml|json|cfg|conf|dat|lic)$' } |
-            ForEach-Object {
-                $hits = Select-String -Path $_.FullName -Pattern "iniciar\.vbs|wscript" -ErrorAction SilentlyContinue
-                foreach ($h in $hits) {
-                    $linhas += ("  {0}" -f $_.FullName)
-                    $linhas += ("     linha {0}: {1}" -f $h.LineNumber, $h.Line.Trim())
+if (-not $raiz) {
+    $L += "TSplus NAO encontrado. Abortando."
+    $L | Set-Content $relat -Encoding UTF8
+    Write-Host "TSplus nao encontrado." -ForegroundColor Red
+    exit 1
+}
+$L += "Raiz TSplus: $raiz"
+$L += ""
+
+# --- 1. Arquivos que citam o lancador ou 'daughter' --------------
+$padroes  = @("iniciar\.vbs", "wscript", "daughter", "DOCSYS")
+$achados  = @()
+
+Get-ChildItem -Path $raiz -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -lt 5MB } |
+    ForEach-Object {
+        $arq = $_
+        foreach ($p in $padroes) {
+            $hits = Select-String -Path $arq.FullName -Pattern $p -ErrorAction SilentlyContinue
+            if ($hits) {
+                $achados += [pscustomobject]@{
+                    Arquivo = $arq.FullName
+                    Padrao  = $p
+                    Linhas  = ($hits | ForEach-Object { "L$($_.LineNumber): $($_.Line.Trim())" }) -join " | "
                 }
+                break
             }
-
-        # (b) arquivos que citam daughter / DisableDaughter
-        $linhas += ""
-        $linhas += "[B] Arquivos que citam 'daughter':"
-        Get-ChildItem -Path $raiz -Recurse -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Length -lt 3MB } |
-            ForEach-Object {
-                $hits = Select-String -Path $_.FullName -Pattern "daughter" -ErrorAction SilentlyContinue
-                foreach ($h in $hits) {
-                    $linhas += ("  {0}" -f $_.FullName)
-                    $linhas += ("     linha {0}: {1}" -f $h.LineNumber, $h.Line.Trim())
-                }
-            }
-
-        # (c) arquivos de config mais provaveis (listagem)
-        $linhas += ""
-        $linhas += "[C] Arquivos .ini/.json/.xml sob a raiz (candidatos a config):"
-        Get-ChildItem -Path $raiz -Recurse -File -Include *.ini,*.json,*.xml -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 40 |
-            ForEach-Object { $linhas += ("  {0}  ({1:yyyy-MM-dd HH:mm})" -f $_.FullName, $_.LastWriteTime) }
+        }
     }
+
+$L += "--- [1] ARQUIVOS RELEVANTES ---"
+if ($achados) {
+    foreach ($a in ($achados | Sort-Object Arquivo -Unique)) {
+        $L += ""
+        $L += "ARQUIVO: $($a.Arquivo)"
+        $L += "  match : $($a.Padrao)"
+        $L += "  trecho: $($a.Linhas)"
+        # copia o arquivo para analise
+        $nome = ($a.Arquivo -replace [regex]::Escape($raiz), "" -replace "[\\/:]", "_").TrimStart("_")
+        Copy-Item $a.Arquivo "$saidaDir\arquivos\$nome" -Force -ErrorAction SilentlyContinue
+    }
+} else {
+    $L += "(nenhum arquivo citou iniciar.vbs / daughter - a config pode estar no registro)"
 }
 
 # --- 2. Registro --------------------------------------------------
-$linhas += ""
-$linhas += "--- Registro (chaves TSplus / Terminal Server) ---"
+$L += ""
+$L += "--- [2] REGISTRO ---"
 $chaves = @(
     "HKLM:\SOFTWARE\WOW6432Node\Digital River",
     "HKLM:\SOFTWARE\Digital River",
     "HKLM:\SOFTWARE\WOW6432Node\TSplus",
-    "HKLM:\SOFTWARE\TSplus",
-    "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
+    "HKLM:\SOFTWARE\TSplus"
 )
 foreach ($c in $chaves) {
     if (Test-Path $c) {
-        $linhas += ""
-        $linhas += "[$c]"
+        $L += ""
+        $L += "[$c]"
         Get-ChildItem -Path $c -Recurse -ErrorAction SilentlyContinue |
-            Select-Object -First 60 |
-            ForEach-Object {
-                $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-                if ($props) {
-                    $linhas += ("  {0}" -f $_.PSPath.Replace("Microsoft.PowerShell.Core\Registry::",""))
-                    $props.PSObject.Properties |
-                        Where-Object { $_.Name -notlike "PS*" } |
-                        ForEach-Object { $linhas += ("      {0} = {1}" -f $_.Name, $_.Value) }
+          ForEach-Object {
+            $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            if ($p) {
+                $cam = $_.PSPath -replace "Microsoft.PowerShell.Core\\Registry::",""
+                $vals = $p.PSObject.Properties |
+                        Where-Object { $_.Name -notlike "PS*" }
+                if ($vals) {
+                    $L += "  $cam"
+                    $vals | ForEach-Object { $L += "      $($_.Name) = $($_.Value)" }
                 }
             }
+          }
+        # exporta a chave inteira
+        $nomeReg = ($c -replace "[:\\]", "_") + ".reg"
+        & reg export ($c -replace "HKLM:","HKLM") "$saidaDir\arquivos\$nomeReg" /y 2>&1 | Out-Null
     }
 }
 
-# --- 3. Estado atual relevante ------------------------------------
-$linhas += ""
-$linhas += "--- Estado atual ---"
-$linhas += ("iniciar.vbs presente : {0}" -f (Test-Path "C:\DOCSYS\iniciar.vbs"))
+# --- 3. Estado atual do lancador ---------------------------------
+$L += ""
+$L += "--- [3] ESTADO DO LANCADOR ---"
+$L += "iniciar.vbs presente : $(Test-Path 'C:\DOCSYS\iniciar.vbs')"
 if (Test-Path "C:\DOCSYS\iniciar.vbs") {
     $c = Get-Content "C:\DOCSYS\iniciar.vbs" -Raw -Encoding Default
-    if ($c -match '(?m)^Const MS_TRAVA\s*=\s*(\d+)') { $linhas += ("MS_TRAVA             : {0}" -f $Matches[1]) }
-    $linhas += ("Auto-recuperacao     : {0}" -f ($c -match "MAX_TENTATIVAS"))
+    if ($c -match '(?m)^Const MS_TRAVA\s*=\s*(\d+)')      { $L += "MS_TRAVA             : $($Matches[1])" }
+    if ($c -match '(?m)^Const MAX_TENTATIVAS\s*=\s*(\d+)'){ $L += "MAX_TENTATIVAS       : $($Matches[1])" }
 }
-$linhas += ("App DeMaria presente : {0}" -f (Test-Path "C:\DeMaria\DOC-Windows\DOC-Windows.exe"))
+$L += "App DeMaria presente : $(Test-Path 'C:\DeMaria\DOC-Windows\DOC-Windows.exe')"
 
-$linhas | Set-Content -Path $saida -Encoding UTF8
+# --- 4. Alerta de dado sensivel ----------------------------------
+$L += ""
+$L += "--- [4] REVISAO ANTES DE COMPARTILHAR ---"
+$suspeitos = Get-ChildItem "$saidaDir\arquivos" -File -ErrorAction SilentlyContinue |
+             ForEach-Object {
+                 $h = Select-String -Path $_.FullName -Pattern "licen|serial|key|activation" -ErrorAction SilentlyContinue
+                 if ($h) { $_.Name }
+             } | Select-Object -Unique
+if ($suspeitos) {
+    $L += "ATENCAO: os arquivos abaixo citam licenca/serial. REVISE antes de enviar:"
+    $suspeitos | ForEach-Object { $L += "  - $_" }
+} else {
+    $L += "Nenhum indicio de chave de licenca nos arquivos capturados."
+}
+
+$L | Set-Content $relat -Encoding UTF8
+
+# --- Empacota -----------------------------------------------------
+$zip = "C:\DOCSYS\captura-tsplus.zip"
+Remove-Item $zip -Force -ErrorAction SilentlyContinue
+Compress-Archive -Path "$saidaDir\*" -DestinationPath $zip -Force
+
 Write-Host ""
-Write-Host "Relatorio gerado em: $saida" -ForegroundColor Green
-Write-Host "Envie este arquivo para automatizarmos a replicacao da config do TSplus."
+Write-Host "Captura concluida." -ForegroundColor Green
+Write-Host "  Relatorio : $relat"
+Write-Host "  Pacote    : $zip"
+Write-Host ""
+Write-Host "REVISE o RELATORIO.txt (secao 4) antes de compartilhar o zip." -ForegroundColor Yellow
 Write-Host ""
