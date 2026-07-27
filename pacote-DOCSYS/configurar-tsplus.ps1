@@ -224,8 +224,10 @@ if (Test-Path $dirUsr) {
 [pscustomobject]$r
 
 Write-Host ""
-Write-Host "Config aplicada. Teste um logon antes de seguir para o proximo servidor." -ForegroundColor Green
-if ($r.Backup -notlike "(simul*") {
+if ($Simular) {
+    Write-Host "SIMULACAO - nada foi gravado. Rode sem -Simular para aplicar." -ForegroundColor Yellow
+} else {
+    Write-Host "Config aplicada. Teste um logon antes de seguir para o proximo servidor." -ForegroundColor Green
     Write-Host "Backup do AppControl.ini: $($r.Backup)" -ForegroundColor DarkGray
 }
 Write-Host ""
