@@ -1,0 +1,14 @@
+# Lista de servidores para implantacao do Lancador DOC-Windows
+#
+# COMO USAR: copie este arquivo para "servidores.txt" e preencha com
+# os seus servidores. O servidores.txt fica FORA do git por seguranca
+# (e um inventario da sua infraestrutura).
+#
+# Um servidor por linha. Aceita nome de maquina ou IP.
+# Linhas iniciadas por # sao ignoradas.
+
+SERVIDOR-TS01
+SERVIDOR-TS02
+SERVIDOR-TS03
+# 10.0.0.11
+# 10.0.0.12

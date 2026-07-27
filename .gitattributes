@@ -1,0 +1,13 @@
+# CRITICO: arquivos executados no Windows PRECISAM de CRLF.
+# Um .bat salvo com LF quebra (labels/goto falham silenciosamente).
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.vbs   text eol=crlf
+*.ps1   text eol=crlf
+
+# Documentacao pode ser LF
+*.md    text eol=lf
+
+# Nao tratar como texto
+*.zip   binary
+*.exe   binary

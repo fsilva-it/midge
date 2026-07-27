@@ -1,0 +1,31 @@
+# === NUNCA versionar: dados operacionais e pessoais ===
+
+# Logs do lancador: contem NOMES DE USUARIOS reais (dado pessoal/LGPD)
+*.log
+logs/
+pacote-DOCSYS/logs/
+
+# Relatorios de implantacao (nomes/IPs de servidores)
+resultado-deploy*.csv
+config-tsplus-descoberta.txt
+
+# Lista real do parque (inventario de infraestrutura)
+# Versione apenas o servidores.exemplo.txt
+servidores.txt
+
+# Lock da fila (runtime)
+fila/
+*.lock
+
+# Pacotes gerados
+*.zip
+
+# Backups locais
+*_OLD.vbs
+*.bak
+*~
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
