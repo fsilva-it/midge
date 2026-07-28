@@ -12,6 +12,17 @@
         startup = C:\DOCSYS
         cmdline = "C:\DOCSYS\iniciar.vbs"
 
+  3) fSingleSessionPerUser = 1 (sessao unica por usuario)
+     Sem isso, reconectar cria sessao NOVA em vez de devolver o
+     usuario a que ja tem o sistema aberto - e a nova pode nascer
+     sem a aplicacao publicada (tela preta). Use -SemSessaoUnica
+     para nao mexer nesse ajuste.
+
+  4) OPCIONAL: -TimeoutDesconectada <min> encerra sessoes
+     desconectadas (libera recursos de quem fecha a janela do RDP
+     sem sair do sistema). Nao e' aplicado por padrao porque pode
+     descartar trabalho nao salvo.
+
  COMO AGE: edita cirurgicamente o AppControl.ini. Se ja existir uma
  aplicacao publicada apontando para o app (DOC-Windows.exe /
  AppLauncher.exe), ela e' CONVERTIDA - preservando nome e grupos
@@ -30,20 +41,24 @@
 param(
     [string] $Grupos   = "",       # ex.: "MEUDOMINIO\Domain Users" (vazio = mantem o atual)
     [string] $AppNome  = "",       # nome exibido (vazio = mantem o atual)
+    [switch] $SemSessaoUnica,      # NAO forcar sessao unica por usuario
+    [int]    $TimeoutDesconectada = 0,  # minutos p/ encerrar sessao desconectada (0 = nao mexer)
     [switch] $Simular              # mostra o que faria, sem gravar
 )
 
 $ErrorActionPreference = "Stop"
 
 $r = [ordered]@{
-    Servidor   = $env:COMPUTERNAME
-    AppControl = "-"
-    Daughter   = "-"
-    Publicacao = "-"
-    PorUsuario = "-"
-    Backup     = "-"
-    Status     = "OK"
-    Detalhe    = ""
+    Servidor    = $env:COMPUTERNAME
+    AppControl  = "-"
+    Daughter    = "-"
+    Publicacao  = "-"
+    PorUsuario  = "-"
+    SessaoUnica = "-"
+    TimeoutDesc = "-"
+    Backup      = "-"
+    Status      = "OK"
+    Detalhe     = ""
 }
 function Terminar($msg) {
     $r.Status = "ERRO"; $r.Detalhe = $msg
@@ -219,6 +234,54 @@ if (Test-Path $dirUsr) {
     $r.PorUsuario = if ($ajust -gt 0) { "$ajust arquivo(s) ajustado(s)" } else { "nada a ajustar" }
 } else {
     $r.PorUsuario = "pasta nao existe (normal em servidor novo)"
+}
+
+# --- 4) SESSAO UNICA POR USUARIO ---------------------------------
+# Sem isso, reconectar cria uma sessao NOVA em vez de devolver o
+# usuario a que ja tem o sistema aberto - e a sessao nova pode nascer
+# sem a aplicacao publicada (tela preta). Foi a causa de um incidente
+# real em producao (28/07/2026).
+if (-not $SemSessaoUnica) {
+    try {
+        $kTS = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
+        $antes = (Get-ItemProperty $kTS -Name fSingleSessionPerUser -ErrorAction SilentlyContinue).fSingleSessionPerUser
+        if ($antes -eq 1) {
+            $r.SessaoUnica = "ja estava 1"
+        } elseif ($Simular) {
+            $r.SessaoUnica = "definiria 1 (antes: $(if ($null -ne $antes) { $antes } else { 'ausente' }))"
+        } else {
+            Set-ItemProperty $kTS -Name fSingleSessionPerUser -Value 1 -Type DWord
+            $r.SessaoUnica = "definido 1 (antes: $(if ($null -ne $antes) { $antes } else { 'ausente' }))"
+        }
+    } catch {
+        $r.SessaoUnica = "ERRO: $($_.Exception.Message)"
+        if ($r.Status -eq "OK") { $r.Status = "ATENCAO" }
+    }
+} else {
+    $r.SessaoUnica = "ignorado (-SemSessaoUnica)"
+}
+
+# --- 5) TIMEOUT DE SESSAO DESCONECTADA (opcional) ----------------
+# Libera recursos de quem fecha a janela do RDP sem sair do sistema.
+# NAO e' aplicado por padrao: encerrar sessao pode descartar trabalho
+# nao salvo. Informe -TimeoutDesconectada <minutos> conscientemente.
+if ($TimeoutDesconectada -gt 0) {
+    try {
+        $kWS = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+        $ms  = $TimeoutDesconectada * 60000
+        if ($Simular) {
+            $r.TimeoutDesc = "definiria $TimeoutDesconectada min"
+        } else {
+            Set-ItemProperty $kWS -Name MaxDisconnectionTime -Value $ms -Type DWord
+            Set-ItemProperty $kWS -Name fResetBroken -Value 1 -Type DWord
+            $r.TimeoutDesc = "$TimeoutDesconectada min (encerra a sessao)"
+        }
+    } catch {
+        $r.TimeoutDesc = "ERRO: $($_.Exception.Message)"
+        if ($r.Status -eq "OK") { $r.Status = "ATENCAO" }
+    }
+} else {
+    $r.TimeoutDesc = "nao alterado"
 }
 
 [pscustomobject]$r
