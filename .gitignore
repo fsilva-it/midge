@@ -29,3 +29,6 @@ fila/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Estado do rollout (IPs e nomes reais - nao versionar)
+ESTADO-ROLLOUT.md
