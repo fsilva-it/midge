@@ -13,6 +13,8 @@
    -Lista      caminho do arquivo com os servidores (padrao servidores.txt)
    -MsTrava    valor a gravar em MS_TRAVA (0 = mantem o do arquivo)
    -Verificar  nao instala, so faz diagnostico dos servidores
+   -ComTSplus  tambem aplica a config do TSplus (publicacao + daughter
+               process handler). Sem isso, so o lancador e' instalado.
    -Paralelo   quantos servidores em paralelo (padrao 5)
 
  Requisitos nos servidores: WinRM habilitado (padrao em dominio via
@@ -24,6 +26,7 @@ param(
     [string] $Lista     = (Join-Path $PSScriptRoot "servidores.txt"),
     [int]    $MsTrava   = 0,
     [switch] $Verificar,
+    [switch] $ComTSplus,   # tambem aplica a config do TSplus em cada servidor
     [int]    $Paralelo  = 5,
     [System.Management.Automation.PSCredential] $Credencial
 )
@@ -47,7 +50,7 @@ if (-not $Credencial) {
 }
 
 # --- Arquivos a enviar --------------------------------------------
-$arquivos = @("iniciar.vbs", "instalar.ps1") |
+$arquivos = @("iniciar.vbs", "instalar.ps1", "configurar-tsplus.ps1") |
             ForEach-Object { Join-Path $PSScriptRoot $_ }
 foreach ($a in $arquivos) {
     if (-not (Test-Path $a)) { throw "Arquivo do pacote nao encontrado: $a" }
@@ -57,7 +60,7 @@ $resultados = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
 # --- Bloco executado por servidor ---------------------------------
 $trabalho = {
-    param($srv, $cred, $arquivos, $msTrava, $somenteVerificar)
+    param($srv, $cred, $arquivos, $msTrava, $somenteVerificar, $comTSplus)
 
     $r = [ordered]@{
         Servidor = $srv; Conexao = "-"; Script = "-"; MsTrava = "-"
@@ -117,6 +120,20 @@ $trabalho = {
                 $r.TSplus  = $saida.TSplusPath
                 $r.Status  = $saida.Status
                 $r.Detalhe = $saida.Detalhe
+
+                # Config do TSplus (publicacao + daughter process handler)
+                if ($comTSplus) {
+                    $ts = Invoke-Command -Session $sess -ScriptBlock {
+                        & powershell -ExecutionPolicy Bypass -File "C:\Temp\pacote-DOCSYS\configurar-tsplus.ps1"
+                    }
+                    if ($ts) {
+                        $r.TSplus = "{0} | {1}" -f $ts.Daughter, $ts.Publicacao
+                        if ($ts.Status -ne "OK") {
+                            $r.Status  = $ts.Status
+                            $r.Detalhe = ($r.Detalhe + " " + $ts.Detalhe).Trim()
+                        }
+                    }
+                }
             }
         } finally {
             Remove-PSSession $sess -ErrorAction SilentlyContinue
@@ -133,7 +150,7 @@ foreach ($srv in $servidores) {
     while (@(Get-Job -State Running).Count -ge $Paralelo) { Start-Sleep -Milliseconds 500 }
     Write-Host ("-> {0}" -f $srv)
     $jobs += Start-Job -ScriptBlock $trabalho `
-             -ArgumentList $srv, $Credencial, $arquivos, $MsTrava, $Verificar.IsPresent
+             -ArgumentList $srv, $Credencial, $arquivos, $MsTrava, $Verificar.IsPresent, $ComTSplus.IsPresent
 }
 
 Write-Host ""
@@ -165,8 +182,12 @@ if ($falhas.Count -gt 0) {
 }
 
 Write-Host ""
-Write-Host "LEMBRETE: o script e' metade do trabalho. Em cada servidor" -ForegroundColor Yellow
-Write-Host "confira tambem a config do TSplus (ver LEIA-ME, secao TSplus):" -ForegroundColor Yellow
-Write-Host "  1) Aplicacao publicada -> wscript.exe + \"C:\DOCSYS\iniciar.vbs\""
-Write-Host "  2) Advanced > Session > Disable the daughter process handler = Yes"
+if ($ComTSplus) {
+    Write-Host "Config do TSplus aplicada. Teste um logon em cada servidor." -ForegroundColor Green
+} else {
+    Write-Host "LEMBRETE: o script e' metade do trabalho. Falta a config do TSplus." -ForegroundColor Yellow
+    Write-Host "Rode de novo com -ComTSplus, ou configure manualmente:" -ForegroundColor Yellow
+    Write-Host "  1) Aplicacao publicada -> wscript.exe + `"C:\DOCSYS\iniciar.vbs`""
+    Write-Host "  2) Advanced > Session > Disable the daughter process handler = Yes"
+}
 Write-Host ""
